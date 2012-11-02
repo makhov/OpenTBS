@@ -36,6 +36,7 @@ define('OPENTBS_SELECT_MAIN','clsOpenTBS.SelectMain');
 define('OPENTBS_DISPLAY_SHEETS','clsOpenTBS.DisplaySheets');
 define('OPENTBS_DELETE_SHEETS','clsOpenTBS.DeleteSheets');
 define('OPENTBS_DELETE_COMMENTS','clsOpenTBS.DeleteComments');
+define('OPENTBS_MERGE_CELLS','clsOpenTBS.MergeCells');
 
 
 class clsOpenTBS extends clsTbsZip {
@@ -52,6 +53,8 @@ class clsOpenTBS extends clsTbsZip {
 		$this->DebugLst = false; // deactivate the debug mode
 		$this->ExtInfo = false;
 		$TBS->TbsZip = &$this; // a shortcut
+		$this->MrgCells = Array();
+		$this->MrgCounters = Array(); 
 		return array('BeforeLoadTemplate','BeforeShow', 'OnCommand', 'OnOperation', 'OnCacheField');
 	}
 
@@ -309,9 +312,34 @@ class clsOpenTBS extends clsTbsZip {
 					$Value = ($t/86400.00)+25569; // unix: 1 means 01/01/1970, xls: 1 means 01/01/1900
 				}
 				break;
+				case 'xlsxMerge':
+					//do nothing
+				break;
 			default:
 				// do nothing
 			}
+
+			//Merge Cells
+			if(isset($Loc->PrmLst['merge']))
+			{
+				$str = $Loc->PrmLst['merge'];
+				$key = md5($str);
+				$params = explode(':', $str);
+				if(count($params) < 3)
+				{
+					//we expect at least three params base:startIndex:endIndex
+					return;
+				}
+				if(!isset($this->MrgCounters[$key]))
+				{
+					$this->MrgCounters[$key] = 0;
+				}	
+				$idx = $params[0] + $this->MrgCounters[$key];
+				$mrgCell = $params[1] . $idx . ':' . $params[2] . $idx; 
+				$this->MrgCells[$mrgCell] = '';
+				$this->MrgCounters[$key] += 1;
+			}
+
 		} elseif(substr($ope,0,3)==='ods') {
 			if (!isset($Loc->PrmLst['odsok'])) $this->OpenDoc_ChangeCellType($Txt, $Loc, $ope, true, $Value);
 		}
@@ -420,6 +448,9 @@ class clsOpenTBS extends clsTbsZip {
 				} else {
 					return $this->RaiseError("($Cmd) sub-file '".$loc->xlsxTarget."' is not found inside the Workbook.");
 				}
+				//reset merge data
+				$this->MrgCells = Array();
+				$this->MrgCounters = Array();
 			}
 			return true;
 
@@ -491,7 +522,43 @@ class clsOpenTBS extends clsTbsZip {
 			return $this->TbsDeleteComments($MainTags, $CommFiles, $CommTags, $Inner);
 
 		}
+		elseif($Cmd === OPENTBS_MERGE_CELLS)
+		{
+			if(count($this->MrgCells) === 0)
+			{
+				//nothing to merge 
+				return true;
+			}
 
+    	$begin = '<mergeCells count="0">';
+    	$count = 0;
+    	$cells = '';
+	    $end = "</mergeCells>";
+	    $regexp = '#(<mergeCells[^>]+count="(\d+)"[^>]*>)(.+)(</mergeCells>)#i';
+      $src = $this->TbsStoreGet($this->TbsCurrIdx, false);
+	    if(preg_match($regexp, $src, $m))
+	    {
+	    	$begin = $m[1];
+	    	$count = $m[2];
+	    	$cells = $m[3];
+	    }
+
+			foreach($this->MrgCells as $range => $dummy )
+			{
+				if(strpos($cells, $range) === false)
+				{
+					$cells .= "<mergeCell ref=\"$range\"/>";
+					$count += 1;
+				}
+			}
+			$begin = preg_replace('#count="\d+"#i', 'count="' . $count . '"', $begin);
+			$merged = $begin . $cells . $end;
+			$result = preg_replace($regexp, $merged, $src);
+			$this->TbsStorePut($this->TbsCurrIdx, $result);
+      $this->TbsStorePark();
+
+			return true;
+		}
 	}
 
 	function TbsStorePark() {
