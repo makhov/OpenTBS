@@ -14,5 +14,11 @@
     "minimum-stability": "dev",
     "require": {
 
+    },
+    "autoload": {
+        "files": [
+            "tbs_class.php",
+            "tbs_plugin_opentbs.php"
+        ]
     }
 }
